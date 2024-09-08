@@ -10,23 +10,25 @@ using Blazored.Modal;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
-	.AddInteractiveServerComponents();
+    .AddInteractiveServerComponents();
 
 builder.Services.AddControllers();
 
 builder.Services.AddDbContext<AuthDbContext>(options =>
-	options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.BuildServiceProvider().GetRequiredService<AuthDbContext>().Database.Migrate();
 
 builder.Services.AddScoped(sp =>
 {
-	var navigationManager = sp.GetRequiredService<NavigationManager>();
-	return new HttpClient { BaseAddress = new Uri(navigationManager.BaseUri) };
+    var navigationManager = sp.GetRequiredService<NavigationManager>();
+    return new HttpClient { BaseAddress = new Uri(navigationManager.BaseUri) };
 });
 
 builder.Services.AddAuthorizationCore();
 builder.Services.AddScoped<CustomAuthenticationStateProvider>();
 builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthenticationStateProvider>(provider =>
-	provider.GetRequiredService<CustomAuthenticationStateProvider>());
+    provider.GetRequiredService<CustomAuthenticationStateProvider>());
 builder.Services.AddScoped<INostrService, NostrService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddBlazoredModal();
@@ -35,8 +37,8 @@ var app = builder.Build();
 
 if (!app.Environment.IsDevelopment())
 {
-	app.UseExceptionHandler("/Error");
-	app.UseHsts();
+    app.UseExceptionHandler("/Error");
+    app.UseHsts();
 }
 
 app.UseHttpsRedirection();
@@ -50,6 +52,6 @@ app.UseAntiforgery();
 app.MapControllers();
 
 app.MapRazorComponents<App>()
-	.AddInteractiveServerRenderMode();
+    .AddInteractiveServerRenderMode();
 
 app.Run();
