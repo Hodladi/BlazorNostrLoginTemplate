@@ -1,0 +1,131 @@
+﻿@using Blazored.Modal
+@using Nostr.Client.Utils
+@using Nostr.Middleware
+@using Nostr.Models.Authentication
+
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IJSRuntime JsRuntime
+@inject CustomAuthenticationStateProvider AuthStateProvider
+<EditForm Model="@_userModel" OnValidSubmit="HandleValidSubmit">
+    <ModalWrapper>
+        <ModalHeader>
+            <h3>Userinfo</h3>
+        </ModalHeader>
+
+        <ModalBody>
+            <DataAnnotationsValidator />
+            <LoadingSpinner IsLoading="@isLoading" />
+
+            <div class="form-group mb-3">
+                <label>Public Key (npub):</label>
+                <input type="text" value="@_userModel.Npub" class="form-control" disabled />
+            </div>
+
+            <div class="form-group mb-3">
+                <label>Username:</label>
+                <InputText @bind-Value="@_userModel.UserName" class="form-control" />
+                <ValidationMessage For="@(() => _userModel.UserName)" />
+            </div>
+
+            <div class="form-group mb-3">
+                <label>Password:</label>
+                <InputText @bind-Value="@_userModel.Secret" type="password" class="form-control" />
+                <ValidationMessage For="@(() => _userModel.Secret)" />
+            </div>
+
+            <div class="form-group mb-3">
+                <label>Confirm Password:</label>
+                <InputText @bind-Value="@_userModel.ConfirmPassword" type="password" class="form-control" />
+                <ValidationMessage For="@(() => _userModel.ConfirmPassword)" />
+            </div>
+        </ModalBody>
+        <ModalFooter>
+            <div class="d-flex justify-content">
+                <button type="submit" class="btn btn-success me-2">Complete Registration</button>
+                <button type="button" class="btn btn-danger" @onclick="CancelRegistration">Cancel</button>
+            </div>
+        </ModalFooter>
+    </ModalWrapper>
+</EditForm>
+
+
+@code {
+    private UserModel _userModel = new UserModel();
+    private bool isLoading = false;
+    [CascadingParameter] public BlazoredModalInstance ModalInstance { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var pubKeyHex = await JsRuntime.InvokeAsync<string>("nos2x.getPublicKey");
+        _userModel.PubKey = pubKeyHex;
+        _userModel.Npub = NostrConverter.ToNpub(_userModel.PubKey);
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        if (_userModel.Secret != _userModel.ConfirmPassword)
+        {
+            Console.WriteLine("Passwords do not match.");
+            return;
+        }
+        isLoading = true;
+        await ModalInstance.CloseAsync();
+        StateHasChanged();
+
+        var registrationResponse = await Http.PostAsJsonAsync("/api/auth/completeRegistration", _userModel);
+
+        if (registrationResponse.IsSuccessStatusCode)
+        {
+            var loginModel = new LoginModel
+                {
+                    Username = _userModel.UserName,
+                    Password = _userModel.Secret
+                };
+
+            var loginResponse = await Http.PostAsJsonAsync("/api/auth/login", loginModel);
+
+            if (loginResponse.IsSuccessStatusCode)
+            {
+                await AuthStateProvider.NotifyUserAuthentication(loginModel.Username, _userModel.Npub);
+                Navigation.NavigateTo("/");
+            }
+            else
+            {
+                Console.WriteLine("Login failed after registration.");
+            }
+        }
+        else
+        {
+            Console.WriteLine("Failed to complete registration.");
+        }
+        isLoading = false;
+    }
+
+    private async Task CancelRegistration()
+    {
+        isLoading = true;
+
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/auth/deletepubkey/{_userModel.PubKey}");
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("Public key deleted successfully.");
+            }
+            else
+            {
+                Console.WriteLine("Failed to delete public key.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error during deletion: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+            await ModalInstance.CloseAsync();
+        }
+    }
+}

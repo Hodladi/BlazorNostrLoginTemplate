@@ -1,0 +1,96 @@
+﻿@using Blazored.Modal
+@using Blazored.Modal.Services
+@using Microsoft.AspNetCore.Components.Authorization
+@using Nostr.Components.Modals
+@using Nostr.Middleware
+
+@inject CustomAuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Navigation
+@inject IJSRuntime JsRuntime
+@inject HttpClient Http
+@inject IModalService Modal
+
+<div class="top-row ps-3 navbar navbar-dark">
+	<div class="container-fluid">
+		<a class="navbar-brand" href="">Nostr</a>
+	</div>
+</div>
+
+<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+	<nav class="flex-column">
+		<div class="nav-item px-3">
+			<NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+				<span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
+			</NavLink>
+		</div>
+
+		<AuthorizeView>
+            <NotAuthorized>
+                <div class="nav-item px-3">
+                    <button class="btn btn-link nav-link" @onclick="OpenLoginModal">
+                        <span class="bi bi-lock-nav-menu" aria-hidden="true"></span> Login
+                    </button>
+                </div>
+            </NotAuthorized>
+		</AuthorizeView>
+
+		<AuthorizeView>
+            <NotAuthorized>
+                <div class="nav-item px-3">
+                    <button class="btn btn-link nav-link" @onclick="OpenRegisterModal">
+                        <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Register
+                    </button>
+                </div>
+            </NotAuthorized>
+		</AuthorizeView>
+
+		<AuthorizeView>
+			<Authorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="sida2">
+                        <span class="bi bi-person-badge-nav-menu" aria-hidden="true"></span> Sida 2
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="account">
+                        <span class="bi bi-person-badge-nav-menu" aria-hidden="true"></span> Account
+                    </NavLink>
+                </div>
+				<div class="nav-item px-3">
+					<button class="btn btn-link nav-link" @onclick="Logout">
+						<span class="bi bi-lock-nav-menu" aria-hidden="true"></span> Logout
+					</button>
+				</div>
+			</Authorized>
+		</AuthorizeView>
+	</nav>
+</div>
+
+@code {
+    private async Task Logout()
+    {
+        await AuthStateProvider.NotifyUserLogout();
+        Navigation.NavigateTo("/");
+    }
+
+    
+
+    private async Task OpenLoginModal()
+    {
+        var parameters = new ModalParameters();
+        var options = new ModalOptions { };
+        Modal.Show<LoginModal>("Select Invoice Type", parameters, options);
+    }
+
+
+    private async Task OpenRegisterModal()
+    {
+        var parameters = new ModalParameters();
+        var options = new ModalOptions { };
+        Modal.Show<RegisterModal>("Select Invoice Type", parameters, options);
+    }
+}
+
+

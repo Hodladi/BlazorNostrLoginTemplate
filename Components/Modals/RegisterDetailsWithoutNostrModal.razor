@@ -1,0 +1,142 @@
+﻿@using Blazored.Modal
+@using Nostr.Middleware
+@using Nostr.Models.Authentication
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject CustomAuthenticationStateProvider AuthStateProvider
+
+<EditForm Model="@_userModel" OnValidSubmit="HandleValidSubmit">
+    <ModalWrapper>
+        <ModalHeader>
+            <h3>Userinfo</h3>
+        </ModalHeader>
+        <ModalBody>
+            <DataAnnotationsValidator />
+
+            <LoadingSpinner IsLoading="@isLoading" />
+
+            @if (!isLoading)
+            {
+                <div class="form-group mb-3">
+                    <label>Username:</label>
+                    <InputText @bind-Value="@_userModel.UserName" class="form-control" @onblur="CheckUsername" />
+                    @if (isUsernameTaken)
+                    {
+                        <div class="text-danger">Username is already taken.</div>
+                    }
+                    <ValidationMessage For="@(() => _userModel.UserName)" />
+                </div>
+
+                <div class="form-group mb-3">
+                    <label>Password:</label>
+                    <InputText @bind-Value="@_userModel.Secret" type="password" class="form-control" />
+                    <ValidationMessage For="@(() => _userModel.Secret)" />
+                </div>
+
+                <div class="form-group mb-3">
+                    <label>Confirm Password:</label>
+                    <InputText @bind-Value="@_userModel.ConfirmPassword" type="password" class="form-control" />
+                    @if (!string.IsNullOrEmpty(_userModel.ConfirmPassword) && _userModel.Secret != _userModel.ConfirmPassword)
+                    {
+                        <div class="text-danger">Passwords do not match.</div>
+                    }
+                    <ValidationMessage For="@(() => _userModel.ConfirmPassword)" />
+                </div>
+            }
+        </ModalBody>
+        <ModalFooter>
+            <div class="d-flex justify-content">
+                <button type="submit" class="btn btn-success me-2" disabled="@(!IsValid)">Register</button>
+                <button type="button" class="btn btn-danger" @onclick="CloseModal">Cancel</button>
+            </div>
+        </ModalFooter>
+    </ModalWrapper>
+</EditForm>
+
+
+@code {
+    [CascadingParameter] public BlazoredModalInstance ModalInstance { get; set; } = default!;
+    private UserModel _userModel = new UserModel();
+    private bool isUsernameTaken = false;
+    private bool isLoading = false;
+    private bool IsValid => !isUsernameTaken && _userModel.Secret == _userModel.ConfirmPassword;
+
+    private async Task CheckUsername(FocusEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_userModel.UserName))
+        {
+            isUsernameTaken = false;
+            return;
+        }
+
+        var response = await Http.GetAsync($"/api/auth/check-username?username={_userModel.UserName}");
+
+        isUsernameTaken = response.StatusCode == System.Net.HttpStatusCode.Conflict;
+
+        StateHasChanged();
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        if (isUsernameTaken || _userModel.Secret != _userModel.ConfirmPassword)
+        {
+            Console.WriteLine("Validation failed.");
+            return;
+        }
+
+        isLoading = true;
+        await ModalInstance.CloseAsync();
+        StateHasChanged();
+
+        var registerRequest = new RegisterRequest
+            {
+                UserName = _userModel.UserName,
+                Secret = _userModel.Secret
+            };
+
+        var response = await Http.PostAsJsonAsync("/api/auth/registerwithoutnostr", registerRequest);
+
+        if (response.IsSuccessStatusCode)
+        {
+            var loginResponse = await Http.PostAsJsonAsync("/api/auth/login", new LoginModel { Username = _userModel.UserName, Password = _userModel.Secret });
+
+            if (loginResponse.IsSuccessStatusCode)
+            {
+                var nPub = await GetUserPublicKey(_userModel.UserName);
+                await AuthStateProvider.NotifyUserAuthentication(_userModel.UserName, nPub);
+                Navigation.NavigateTo("/");
+            }
+            else
+            {
+                string errorContent = await loginResponse.Content.ReadAsStringAsync();
+                Console.WriteLine($"Login failed after registration: {errorContent}");
+            }
+        }
+        else
+        {
+            string errorContent = await response.Content.ReadAsStringAsync();
+            Console.WriteLine($"Failed to complete registration: {errorContent}");
+        }
+
+        isLoading = false;
+    }
+
+    private async Task<string> GetUserPublicKey(string username)
+    {
+        var response = await Http.GetAsync($"/api/auth/get-pubkey?username={username}");
+
+        if (response.IsSuccessStatusCode)
+        {
+            var nPub = await response.Content.ReadAsStringAsync();
+            return nPub;
+        }
+
+        Console.WriteLine($"Failed to retrieve public key for {username}: {response.ReasonPhrase}");
+        return string.Empty;
+    }
+
+    private async Task CloseModal()
+    {
+        await ModalInstance.CloseAsync();
+    }
+}

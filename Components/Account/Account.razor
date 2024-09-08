@@ -1,0 +1,201 @@
+﻿@page "/account"
+@using Nostr.Services
+@using Nostr.Client.Utils
+@using Nostr.Models.Authentication
+@using Nostr.Middleware
+@inject HttpClient Http
+@inject IUserService UserService
+@inject CustomAuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Navigation
+@inject IJSRuntime JsRuntime
+
+<h3>Account</h3>
+
+<LoadingSpinner IsLoading="@isLoading" />
+
+@if (!isLoading)
+{
+    <EditForm Model="@userProfile" OnValidSubmit="SaveChanges">
+        <DataAnnotationsValidator />
+        <div class="container mt-4">
+            <div class="row mb-3">
+                <div class="col">
+                    <label>Public Key (npub):</label>
+                    <InputText @bind-Value="userProfile.Npub" class="form-control" @onblur="CheckPublicKey" />
+                    @if (isPubKeyTaken)
+                    {
+                        <div class="text-danger">Public key is already taken.</div>
+                    }
+                    <ValidationMessage For="@(() => userProfile.Npub)" />
+                </div>
+            </div>
+            <div class="row mb-3">
+                <div class="col">
+                    <div class="form-group">
+                        <label>Public Key (hex):</label>
+                        <input type="text" value="@userProfile.PubKey" class="form-control" disabled />
+                    </div>
+                </div>
+            </div>
+            <div class="row mb-3">
+                <div class="col">
+                    <label>Username:</label>
+                    <InputText @bind-Value="userProfile.UserName" class="form-control" @onblur="CheckUsername" />
+                    @if (isUsernameTaken)
+                    {
+                        <div class="text-danger">Username is already taken.</div>
+                    }
+                    <ValidationMessage For="@(() => userProfile.UserName)" />
+                </div>
+            </div>
+
+            <div class="row mb-3">
+                <div class="col">
+                    <label>New Password:</label>
+                    <InputText @bind-Value="userProfile.NewPassword" type="password" class="form-control" placeholder="New Password" />
+                    <ValidationMessage For="@(() => userProfile.NewPassword)" />
+                </div>
+            </div>
+
+            <div class="row mb-3">
+                <div class="col">
+                    <label>Confirm Password:</label>
+                    <InputText @bind-Value="userProfile.ConfirmPassword" type="password" class="form-control" placeholder="Confirm Password" />
+                    <ValidationMessage For="@(() => userProfile.ConfirmPassword)" />
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-success" disabled="@(isUsernameTaken || isPubKeyTaken)">Save Changes</button>
+        </div>
+    </EditForm>
+}
+
+@code {
+    private UserProfileModel userProfile = new UserProfileModel();
+    private string? currentUsername = string.Empty;
+    private bool isUsernameTaken = false;
+    private bool isPubKeyTaken = false;
+    private bool isLoading = true; // State variable to manage loading state
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        if (user.Identity.IsAuthenticated)
+        {
+            currentUsername = user.Identity.Name;
+            var nPub = user.FindFirst("nPub")?.Value;
+            await LoadUserProfile(currentUsername);
+        }
+
+        isLoading = false; // Set loading to false when data is loaded
+    }
+
+    private async Task LoadUserProfile(string userName)
+    {
+        isLoading = true; // Set loading to true while data is being loaded
+        var user = await UserService.GetUserByUsernameAsync(userName);
+
+        if (user != null)
+        {
+            userProfile.UserName = user.UserName;
+            userProfile.PubKey = user.PubKey;
+            userProfile.Npub = user.PubKey.StartsWith("npub") ? user.PubKey : NostrConverter.ToNpub(user.PubKey);
+        }
+
+        isLoading = false; // Set loading to false when data is loaded
+    }
+
+    private async Task CheckUsername()
+    {
+        if (string.IsNullOrWhiteSpace(userProfile.UserName) || userProfile.UserName == currentUsername)
+        {
+            isUsernameTaken = false;
+            return;
+        }
+
+        var response = await Http.GetAsync($"/api/auth/check-username?username={userProfile.UserName}");
+        isUsernameTaken = response.StatusCode == System.Net.HttpStatusCode.Conflict;
+        StateHasChanged();
+    }
+
+    private async Task CheckPublicKey()
+    {
+        if (string.IsNullOrWhiteSpace(userProfile.Npub))
+        {
+            isPubKeyTaken = false;
+            return;
+        }
+
+        string publicKeyToCheck;
+        if (userProfile.Npub.StartsWith("npub"))
+        {
+            try
+            {
+                publicKeyToCheck = NostrConverter.ToHex(userProfile.Npub, out _);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Invalid npub format: {ex.Message}");
+                isPubKeyTaken = true;
+                StateHasChanged();
+                return;
+            }
+        }
+        else
+        {
+            publicKeyToCheck = userProfile.Npub;
+        }
+
+        var response = await Http.GetAsync($"/api/auth/check-pubkey?pubKey={publicKeyToCheck}");
+        isPubKeyTaken = response.StatusCode == System.Net.HttpStatusCode.Conflict;
+        StateHasChanged();
+    }
+
+    private async Task SaveChanges()
+    {
+        if (isUsernameTaken || isPubKeyTaken)
+        {
+            Console.WriteLine("Cannot save changes, username or public key is already taken.");
+            return;
+        }
+
+        var user = await UserService.GetUserByUsernameAsync(currentUsername);
+
+        if (user == null)
+        {
+            Console.WriteLine("User not found.");
+            return;
+        }
+
+        user.UserName = userProfile.UserName;
+
+        if (!string.IsNullOrEmpty(userProfile.Npub) && userProfile.Npub.StartsWith("npub"))
+        {
+            user.PubKey = NostrConverter.ToHex(userProfile.Npub, out string hrp);
+        }
+        else
+        {
+            user.PubKey = userProfile.Npub;
+        }
+
+        if (!string.IsNullOrWhiteSpace(userProfile.NewPassword) || !string.IsNullOrWhiteSpace(userProfile.ConfirmPassword))
+        {
+            if (userProfile.NewPassword == userProfile.ConfirmPassword)
+            {
+                user.Secret = BCrypt.Net.BCrypt.HashPassword(userProfile.NewPassword);
+            }
+            else
+            {
+                Console.WriteLine("Passwords do not match.");
+                return;
+            }
+        }
+
+        await UserService.UpdateUserAsync(user);
+        await AuthStateProvider.NotifyUserAuthentication(user.UserName, user.PubKey);
+        await JsRuntime.InvokeVoidAsync("alert", "Your changes have been saved");
+        Navigation.NavigateTo("/");
+    }
+}

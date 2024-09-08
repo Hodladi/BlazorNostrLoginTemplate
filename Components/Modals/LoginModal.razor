@@ -1,0 +1,151 @@
+﻿@using Blazored.Modal
+@using Nostr.Middleware
+@using Nostr.Models.Authentication
+
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IJSRuntime JsRuntime
+@inject CustomAuthenticationStateProvider AuthStateProvider
+<EditForm Model="@_loginModel" OnValidSubmit="HandleLogin">
+    <ModalWrapper>
+        <ModalHeader>
+            <h3 class="mb-0">Login</h3>
+        </ModalHeader>
+        <ModalBody>
+            <LoadingSpinner IsLoading="@isLoading" />
+
+            @if (!isLoading)
+            {
+
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+
+                <div class="form-group mb-3">
+                    <label for="username">Username:</label>
+                    <InputText @bind-Value="@_loginModel.Username" id="username" class="form-control" />
+                </div>
+
+                <div class="form-group mb-3">
+                    <label for="password">Password:</label>
+                    <InputText @bind-Value="@_loginModel.Password" type="password" id="password" class="form-control" />
+                </div>
+
+
+
+
+
+            }
+        </ModalBody>
+        <ModalFooter>
+            <div class="d-flex justify-content">
+                <button type="submit" class="btn btn-success me-2">Login</button>
+                <button @onclick="LoginWithNos2X" class="btn btn-outline-primary me-2">Login with Nos2x</button>
+                <button type="button" class="btn btn-danger" @onclick="CloseModal">Cancel</button>
+            </div>
+        </ModalFooter>
+    </ModalWrapper>
+</EditForm>
+
+@code {
+    [CascadingParameter] public BlazoredModalInstance ModalInstance { get; set; } = default!;
+
+    private LoginModel _loginModel = new LoginModel();
+    private bool isLoading = false;
+
+    private async Task HandleLogin()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        var response = await Http.PostAsJsonAsync("/api/auth/login", _loginModel);
+        if (response.IsSuccessStatusCode)
+        {
+            var nPub = await GetUserPublicKey(_loginModel.Username);
+            await AuthStateProvider.NotifyUserAuthentication(_loginModel.Username, nPub);
+
+            Navigation.NavigateTo("/");
+        }
+        else
+        {
+            string errorContent = await response.Content.ReadAsStringAsync();
+            Console.WriteLine($"Login failed: {errorContent}");
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoginWithNos2X()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            string pubKey = await JsRuntime.InvokeAsync<string>("nos2x.getPublicKey");
+            string challenge = await GetChallengeFromServer(pubKey);
+            long createdAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var signedChallenge = await JsRuntime.InvokeAsync<Dictionary<string, object>>("nos2x.signChallenge", challenge, createdAt);
+            string? signature = signedChallenge["sig"].ToString();
+            var response = await Http.PostAsJsonAsync("/api/auth/loginuser", new { PubKey = pubKey, Signature = signature, Challenge = challenge, CreatedAt = createdAt });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var username = await GetUsernameByPublicKey(pubKey);
+                await AuthStateProvider.NotifyUserAuthentication(username, pubKey);
+
+                Navigation.NavigateTo("/");
+            }
+            else
+            {
+                string errorContent = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"Login failed: {errorContent}");
+                isLoading = false;
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error during login: {ex.Message}");
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task<string> GetChallengeFromServer(string pubKey)
+    {
+        var response = await Http.GetStringAsync($"/api/auth/challenge?pubKey={pubKey}");
+        return response;
+    }
+
+    private async Task<string> GetUserPublicKey(string username)
+    {
+        var response = await Http.GetAsync($"/api/auth/get-pubkey?username={username}");
+
+        if (response.IsSuccessStatusCode)
+        {
+            var nPub = await response.Content.ReadAsStringAsync();
+            return nPub;
+        }
+
+        Console.WriteLine($"Failed to retrieve public key for {username}: {response.ReasonPhrase}");
+        return string.Empty;
+    }
+
+    private async Task<string> GetUsernameByPublicKey(string pubKey)
+    {
+        var response = await Http.GetAsync($"/api/auth/get-username?pubKey={pubKey}");
+
+        if (response.IsSuccessStatusCode)
+        {
+            var username = await response.Content.ReadAsStringAsync();
+            return username;
+        }
+
+        Console.WriteLine($"Failed to retrieve username for public key {pubKey}: {response.ReasonPhrase}");
+        return string.Empty;
+    }
+    private async Task CloseModal()
+    {
+        await ModalInstance.CloseAsync();
+    }
+}

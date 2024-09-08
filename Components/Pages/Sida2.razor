@@ -1,0 +1,15 @@
+﻿@page "/sida2"
+@using Microsoft.AspNetCore.Components.Authorization
+
+<AuthorizeView>
+	<Authorized>
+		<h1>Sida 2</h1>
+	</Authorized>
+	<NotAuthorized>
+		<h1>You are not logged in.</h1>
+	</NotAuthorized>
+</AuthorizeView>
+
+@code {
+
+}
